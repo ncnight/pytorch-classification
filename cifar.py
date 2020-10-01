@@ -19,6 +19,7 @@ import torch.utils.data as data
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import models.cifar as models
+from zfpytransform import zfpycoefficient
 
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 
@@ -77,6 +78,8 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true',
 #Device options
 parser.add_argument('--gpu-id', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
+parser.add_argument('--precision', default=1, type=int)
+parser.add_argument('--best_acc_file', default='./results.txt', type=str)
 
 args = parser.parse_args()
 state = {k: v for k, v in args._get_kwargs()}
@@ -87,6 +90,7 @@ assert args.dataset == 'cifar10' or args.dataset == 'cifar100', 'Dataset can onl
 # Use CUDA
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu_id
 use_cuda = torch.cuda.is_available()
+print(f'Using cuda: {use_cuda}')
 
 # Random seed
 if args.manualSeed is None:
@@ -114,11 +118,13 @@ def main():
         transforms.RandomHorizontalFlip(),
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        zfpycoefficient(precision=args.precision),
     ])
 
     transform_test = transforms.Compose([
         transforms.ToTensor(),
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        zfpycoefficient(precision=args.precision),
     ])
     if args.dataset == 'cifar10':
         dataloader = datasets.CIFAR10
@@ -175,7 +181,7 @@ def main():
     optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
     # Resume
-    title = 'cifar-10-' + args.arch
+    title = 'cifar-10-' + args.arch + '-precision-' + str(args.precision)
     if args.resume:
         # Load checkpoint.
         print('==> Resuming from checkpoint..')
@@ -227,6 +233,12 @@ def main():
 
     print('Best acc:')
     print(best_acc)
+    save_best_acc(args.best_acc_file, best_acc, title)
+
+def save_best_acc(fname, acc, title):
+    with open(fname, 'a+') as fp:
+        s = title + ': ' + str(acc) + '\n'
+        fp.write(s)
 
 def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
     # switch to train mode
@@ -245,7 +257,7 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
         data_time.update(time.time() - end)
 
         if use_cuda:
-            inputs, targets = inputs.cuda(), targets.cuda(async=True)
+            inputs, targets = inputs.cuda(), targets.cuda(non_blocking=True)
         inputs, targets = torch.autograd.Variable(inputs), torch.autograd.Variable(targets)
 
         # compute output
@@ -254,9 +266,9 @@ def train(trainloader, model, criterion, optimizer, epoch, use_cuda):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -311,9 +323,9 @@ def test(testloader, model, criterion, epoch, use_cuda):
 
         # measure accuracy and record loss
         prec1, prec5 = accuracy(outputs.data, targets.data, topk=(1, 5))
-        losses.update(loss.data[0], inputs.size(0))
-        top1.update(prec1[0], inputs.size(0))
-        top5.update(prec5[0], inputs.size(0))
+        losses.update(loss.item(), inputs.size(0))
+        top1.update(prec1.item(), inputs.size(0))
+        top5.update(prec5.item(), inputs.size(0))
 
         # measure elapsed time
         batch_time.update(time.time() - end)
